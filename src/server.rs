@@ -1,13 +1,19 @@
+pub mod signal;
+
+use std::sync::Arc;
+
 use axum::routing::get;
+
+use signal::{create_signal, Signal};
 use socketioxide::{
-    extract::{AckSender, Data, SocketRef},
+    extract::{AckSender, Data, SocketRef, State},
     SocketIo,
 };
+
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
 fn on_connect(socket: SocketRef) {
-    info!("connected: {:?}", socket.id);
     // For subscriber (worker)
     socket.emit("what-role", "").ok();
 
@@ -38,9 +44,21 @@ fn on_connect(socket: SocketRef) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::subscriber::set_global_default(FmtSubscriber::default())?;
 
-    let (layer, io) = SocketIo::new_layer();
+    let count = create_signal(0);
 
-    io.ns("/", on_connect);
+    let (layer, io) = SocketIo::builder().with_state(count.clone()).build_layer();
+
+    io.ns(
+        "/",
+        move |socket: SocketRef, State(state): State<Arc<Signal<i32>>>| {
+            println!("CONN: {}", socket.id);
+            state.set(state.get() + 1);
+        },
+    );
+
+    count.effect(|value| {
+        println!("{}", value);
+    });
 
     let app = axum::Router::new()
         .route("/", get(|| async { "Hello, World!" }))
@@ -50,6 +68,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
-
+    // runtime.dispose();
     Ok(())
 }
